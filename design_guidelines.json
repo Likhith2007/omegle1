@@ -1,0 +1,170 @@
+{
+  "identity": {
+    "name": "E1",
+    "archetype": "Electric & Neon",
+    "vibe": "Mysterious, Immediate, Sleek, High-Voltage",
+    "core_principles": [
+      "Fusion over Imitation",
+      "Emotion First",
+      "Content is King",
+      "Zoom In",
+      "Negative Space",
+      "Contrast"
+    ]
+  },
+  "typography": {
+    "fonts": {
+      "heading": {
+        "family": "Outfit",
+        "weights": ["400", "600", "800"],
+        "usage": "Headings, Hero Text, Big Numbers",
+        "fallback": "sans-serif"
+      },
+      "body": {
+        "family": "Manrope",
+        "weights": ["400", "500", "700"],
+        "usage": "Paragraphs, UI Labels, Chat Text",
+        "fallback": "sans-serif"
+      }
+    },
+    "rules": [
+      "Headings > 32px must use tracking-tight",
+      "Overlines must be Uppercase + tracking-widest + text-xs",
+      "Never use Inter for headings",
+      "Use font-light for large display text to create elegance"
+    ]
+  },
+  "colors": {
+    "palette": {
+      "background": {
+        "default": "#09090b",
+        "surface": "#18181b",
+        "surface_highlight": "#27272a",
+        "overlay": "rgba(9, 9, 11, 0.8)"
+      },
+      "text": {
+        "primary": "#f4f4f5",
+        "secondary": "#a1a1aa",
+        "muted": "#52525b",
+        "inverse": "#09090b"
+      },
+      "brand": {
+        "primary": "#10b981",
+        "primary_glow": "rgba(16, 185, 129, 0.5)",
+        "secondary": "#8b5cf6",
+        "secondary_glow": "rgba(139, 92, 246, 0.5)",
+        "accent": "#f59e0b"
+      },
+      "semantic": {
+        "success": "#10b981",
+        "error": "#ef4444",
+        "warning": "#f59e0b",
+        "info": "#3b82f6"
+      }
+    },
+    "gradients": {
+      "hero": "linear-gradient(135deg, #09090b 0%, #18181b 100%)",
+      "brand_mesh": "radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.15), transparent 70%)",
+      "glass": "linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%)"
+    }
+  },
+  "layout": {
+    "spacing_scale": [1, 2, 4, 6, 8, 12, 16, 20, 24, 32, 40, 48, 64],
+    "grid_systems": {
+      "marketing": {
+        "name": "The Tetris Grid",
+        "classes": "grid grid-cols-1 md:grid-cols-12 gap-8",
+        "description": "Asymmetrical layout for landing page features"
+      },
+      "app": {
+        "name": "The Control Room",
+        "classes": "grid grid-cols-1 lg:grid-cols-4 gap-4 h-screen p-4",
+        "description": "Dense, functional grid for the chat interface"
+      }
+    },
+    "container_rules": [
+      "Containers with borders MUST have internal padding (p-6 or p-8)",
+      "Never center text by default on marketing pages",
+      "Use negative space (gap-12+) to separate sections"
+    ]
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-emerald-500 text-white hover:bg-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all duration-300 rounded-full px-8 py-3 font-semibold tracking-wide",
+      "secondary": "bg-zinc-800 text-white border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 transition-all duration-300 rounded-full px-6 py-2",
+      "ghost": "text-zinc-400 hover:text-white hover:bg-white/5 transition-all duration-200 rounded-lg px-4 py-2"
+    },
+    "cards": {
+      "glass": "bg-black/40 backdrop-blur-xl border border-white/10 shadow-2xl rounded-2xl",
+      "solid": "bg-zinc-900 border border-zinc-800 rounded-xl"
+    },
+    "inputs": {
+      "default": "bg-zinc-950/50 border border-zinc-800 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 rounded-lg px-4 py-3 text-zinc-100 placeholder:text-zinc-600 transition-all"
+    },
+    "chat_bubbles": {
+      "sent": "bg-emerald-600 text-white rounded-2xl rounded-tr-sm px-4 py-2 max-w-[80%]",
+      "received": "bg-zinc-800 text-zinc-100 rounded-2xl rounded-tl-sm px-4 py-2 max-w-[80%]"
+    }
+  },
+  "assets": {
+    "images": {
+      "hero_main": {
+        "url": "https://images.unsplash.com/photo-1755157041505-b4d6d2d2bd0c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzl8MHwxfHNlYXJjaHw0fHxuZW9uJTIwcG9ydHJhaXQlMjB5b3VuZyUyMHBlcnNvbnxlbnwwfHx8fDE3NjQzNTY4NDF8MA&ixlib=rb-4.1.0&q=85",
+        "alt": "Young woman with blue hair and glasses smiling in neon light",
+        "usage": "Hero section background or main visual"
+      },
+      "hero_secondary": {
+        "url": "https://images.unsplash.com/photo-1755157041534-0aca90fbb802?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzl8MHwxfHNlYXJjaHwzfHxuZW9uJTIwcG9ydHJhaXQlMjB5b3VuZyUyMHBlcnNvbnxlbnwwfHx8fDE3NjQzNTY4NDF8MA&ixlib=rb-4.1.0&q=85",
+        "alt": "Young man with blue hair under pink and green lights",
+        "usage": "Feature section or testimonial avatar"
+      },
+      "background_texture": {
+        "url": "https://images.unsplash.com/photo-1584456644237-c41401a79699?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzl8MHwxfHNlYXJjaHw0fHxhYnN0cmFjdCUyMGRpZ2l0YWwlMjBuZXR3b3JrJTIwY29ubmVjdGlvbnMlMjBkYXJrJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3NjQzNTY4NDN8MA&ixlib=rb-4.1.0&q=85",
+        "alt": "Abstract dark metal frame texture",
+        "usage": "Subtle background overlay for depth"
+      }
+    },
+    "icons": {
+      "library": "lucide-react",
+      "style": "Stroke width 1.5px, rounded corners"
+    }
+  },
+  "motion": {
+    "transitions": {
+      "default": "transition-all duration-300 ease-out",
+      "slow": "transition-all duration-700 ease-in-out"
+    },
+    "animations": {
+      "fade_in": "animate-in fade-in duration-500",
+      "slide_up": "animate-in slide-in-from-bottom-4 duration-500",
+      "pulse_glow": "animate-pulse"
+    }
+  },
+  "accessibility": {
+    "contrast_rules": [
+      "Normal Text: 4.5:1 minimum",
+      "Large Text: 3:1 minimum",
+      "Interactive Elements: 3:1 minimum"
+    ],
+    "requirements": [
+      "All interactive elements must have data-testid",
+      "Focus states must be visible and high contrast",
+      "Do not rely on color alone for status"
+    ]
+  },
+  "universal_guidelines": [
+    "Avoid 'AI Slop' aesthetic (generic centered layouts, uniform styling)",
+    "Use dark colors independently, avoid dark gradients",
+    "Create depth through layered design elements with z-index hierarchy",
+    "Use glass-morphism effects with backdrop filters (12-24px blur)",
+    "DO NOT apply universal transition (transition: all)",
+    "DO NOT center align the app container",
+    "Always use modern button styles (pill-shaped or sharp)",
+    "NEVER use AI assistant Emoji characters",
+    "Every interaction needs micro-animations",
+    "Use 2-3x more spacing than feels comfortable",
+    "Subtle grain textures and noise overlays are recommended",
+    "Use 'sonner' for toasts"
+  ],
+  "instructions_to_main_agent": "Implement the design using the specified colors, fonts, and components. Prioritize the 'Electric & Neon' vibe. Use the provided image URLs for the landing page. Ensure the chat interface is dense and functional ('Control Room' grid) while the landing page is expressive ('Tetris' grid). Use Shadcn components for complex interactions but customize them to match the design system."
+}

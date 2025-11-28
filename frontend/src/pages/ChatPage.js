@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import useWebRTC from "@/hooks/useWebRTC";
 import ReportModal from "@/components/ReportModal";
 import SettingsModal from "@/components/SettingsModal";
+import "@/styles/chat.css";
 
 const ChatPage = () => {
   const navigate = useNavigate();

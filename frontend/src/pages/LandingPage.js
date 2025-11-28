@@ -4,6 +4,7 @@ import { Video, MessageCircle, Users, Shield, Zap, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import axios from "axios";
+import "@/styles/landing.css";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 

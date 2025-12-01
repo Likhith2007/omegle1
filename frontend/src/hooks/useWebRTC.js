@@ -65,60 +65,105 @@ const useWebRTC = () => {
 
   // Create peer connection
   const createPeerConnection = useCallback(async () => {
-    const config = iceConfigRef.current || {
-      iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }]
-    };
+    try {
+      const config = iceConfigRef.current || {
+        iceServers: [
+          { urls: ["stun:stun.l.google.com:19302"] },
+          { urls: ["stun:stun1.l.google.com:19302"] },
+          { urls: ["stun:stun2.l.google.com:19302"] }
+        ]
+      };
 
-    const peerConnection = new RTCPeerConnection(config);
+      console.log("Creating new peer connection with config:", config);
+      const peerConnection = new RTCPeerConnection(config);
 
-    // Add local tracks
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        peerConnection.addTrack(track, localStreamRef.current);
-      });
-    }
-
-    // Handle ICE candidates
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate && websocketRef.current) {
-        websocketRef.current.send(
-          JSON.stringify({
-            type: "ice_candidate",
-            candidate: event.candidate
-          })
-        );
+      // Add local tracks if they exist
+      if (localStreamRef.current) {
+        console.log("Adding local tracks to peer connection");
+        localStreamRef.current.getTracks().forEach((track) => {
+          console.log(`Adding ${track.kind} track to peer connection`);
+          peerConnection.addTrack(track, localStreamRef.current);
+        });
       }
-    };
 
-    // Handle remote stream
-    peerConnection.ontrack = (event) => {
-      console.log("Received remote track:", event.track.kind);
-      if (event.streams && event.streams[0]) {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
+      // Handle ICE candidates
+      peerConnection.onicecandidate = (event) => {
+        console.log("ICE candidate:", event.candidate);
+        if (event.candidate && websocketRef.current?.readyState === WebSocket.OPEN) {
+          console.log("Sending ICE candidate:", event.candidate);
+          websocketRef.current.send(
+            JSON.stringify({
+              type: "ice_candidate",
+              candidate: {
+                candidate: event.candidate.candidate,
+                sdpMid: event.candidate.sdpMid,
+                sdpMLineIndex: event.candidate.sdpMLineIndex
+              }
+            })
+          );
+        } else if (!event.candidate) {
+          console.log("No more ICE candidates to gather");
         }
-        setIsConnected(true);
-      }
-    };
+      };
 
-    // Handle connection state changes
-    peerConnection.onconnectionstatechange = () => {
-      console.log("Connection state:", peerConnection.connectionState);
-      setConnectionState(peerConnection.connectionState);
+      // Handle remote stream
+      peerConnection.ontrack = (event) => {
+        console.log("Received remote track:", event.track.kind, event.streams);
+        if (event.streams && event.streams[0]) {
+          console.log("Setting remote video source");
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = event.streams[0];
+            setIsConnected(true);
+            toast.success("Connected to stranger!");
+          }
+        }
+      };
 
-      if (peerConnection.connectionState === "connected") {
-        setIsConnected(true);
-        toast.success("Connected to stranger!");
-      } else if (peerConnection.connectionState === "failed") {
-        toast.error("Connection failed");
-        closePeerConnection();
-      } else if (peerConnection.connectionState === "disconnected") {
-        setIsConnected(false);
-      }
-    };
+      // Handle connection state changes
+      peerConnection.onconnectionstatechange = () => {
+        console.log("Connection state changed to:", peerConnection.connectionState);
+        setConnectionState(peerConnection.connectionState);
 
-    peerConnectionRef.current = peerConnection;
-    return peerConnection;
+        switch (peerConnection.connectionState) {
+          case "connected":
+            setIsConnected(true);
+            toast.success("Connected to stranger!");
+            break;
+          case "disconnected":
+          case "failed":
+            console.error("Connection failed or disconnected");
+            setIsConnected(false);
+            closePeerConnection();
+            // Try to reconnect if WebSocket is still open
+            if (websocketRef.current?.readyState === WebSocket.OPEN) {
+              websocketRef.current.send(JSON.stringify({ type: "ready", interests: [] }));
+            }
+            break;
+          case "closed":
+            setIsConnected(false);
+            break;
+          default:
+            console.log("Connection state:", peerConnection.connectionState);
+        }
+      };
+
+      // Handle ICE connection state changes
+      peerConnection.oniceconnectionstatechange = () => {
+        console.log("ICE connection state:", peerConnection.iceConnectionState);
+        if (peerConnection.iceConnectionState === "failed") {
+          console.error("ICE connection failed");
+          // Try to recover or restart ICE
+          peerConnection.restartIce();
+        }
+      };
+
+      peerConnectionRef.current = peerConnection;
+      return peerConnection;
+    } catch (error) {
+      console.error("Error creating peer connection:", error);
+      toast.error("Failed to create connection");
+      throw error;
+    }
   }, []);
 
   // Close peer connection
@@ -159,24 +204,34 @@ const useWebRTC = () => {
           break;
 
         case "paired":
-          console.log("Paired with peer:", message.peer_id);
+          console.log(
+            "Paired with peer:",
+            message.peer_id,
+            "self:",
+            clientIdRef.current
+          );
           setConnectionState("connecting");
           setPeerId(message.peer_id);
           roomIdRef.current = message.room_id;
 
-          // Create offer
-          const peerConnection = await createPeerConnection();
-          const offer = await peerConnection.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: true
-          });
-          await peerConnection.setLocalDescription(offer);
-          ws.send(
-            JSON.stringify({
-              type: "offer",
-              sdp: peerConnection.localDescription.toJSON()
-            })
-          );
+          // Decide which side should create the offer to avoid glare
+          const isInitiator = clientIdRef.current < message.peer_id;
+
+          if (isInitiator) {
+            const peerConnection = await createPeerConnection();
+            const offer = await peerConnection.createOffer({
+              offerToReceiveAudio: true,
+              offerToReceiveVideo: true
+            });
+            await peerConnection.setLocalDescription(offer);
+            ws.send(
+              JSON.stringify({
+                type: "offer",
+                sdp: peerConnection.localDescription.toJSON()
+              })
+            );
+          }
+
           break;
 
         case "offer":
@@ -208,10 +263,19 @@ const useWebRTC = () => {
           break;
 
         case "ice_candidate":
-          console.log("Received ICE candidate");
+          console.log("Received ICE candidate:", message.candidate);
           if (peerConnectionRef.current && message.candidate) {
-            const candidate = new RTCIceCandidate(message.candidate);
-            await peerConnectionRef.current.addIceCandidate(candidate);
+            try {
+              const candidate = new RTCIceCandidate({
+                candidate: message.candidate.candidate,
+                sdpMid: message.candidate.sdpMid,
+                sdpMLineIndex: message.candidate.sdpMLineIndex
+              });
+              await peerConnectionRef.current.addIceCandidate(candidate);
+              console.log("Successfully added ICE candidate");
+            } catch (error) {
+              console.error("Error adding ICE candidate:", error);
+            }
           }
           break;
 
@@ -254,28 +318,64 @@ const useWebRTC = () => {
 
   // Initialize everything
   useEffect(() => {
+    let isMounted = true;
+    
     const initialize = async () => {
       try {
+        console.log("Initializing WebRTC...");
         await fetchICEConfig();
+        console.log("ICE config fetched");
         await initializeMedia();
+        console.log("Media initialized");
         connectWebSocket();
+        console.log("WebSocket connected");
       } catch (error) {
         console.error("Initialization error:", error);
+        if (isMounted) {
+          toast.error("Failed to initialize: " + error.message);
+        }
       }
     };
 
-    initialize();
+    // Add a small delay to ensure DOM is ready
+    const timer = setTimeout(initialize, 1000);
 
     // Cleanup
     return () => {
+      isMounted = false;
+      clearTimeout(timer);
+      
+      console.log("Cleaning up WebRTC...");
+      
+      // Stop all media tracks
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current.getTracks().forEach((track) => {
+          track.stop();
+        });
       }
+      
+      // Close peer connection
       if (peerConnectionRef.current) {
+        console.log("Closing peer connection");
         peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
       }
+      
+      // Close WebSocket
       if (websocketRef.current) {
-        websocketRef.current.close();
+        console.log("Closing WebSocket");
+        if (websocketRef.current.readyState === WebSocket.OPEN) {
+          websocketRef.current.close();
+        }
+        websocketRef.current = null;
+      }
+      
+      // Clear video elements
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = null;
+      }
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = null;
       }
     };
   }, [fetchICEConfig, initializeMedia, connectWebSocket]);

@@ -121,9 +121,14 @@ class ConnectionManager:
         return str(uuid.uuid4())
 
     async def match_users(self, client_id: str, interests: List[str] = []):
+        logger.info(f"Matching user {client_id} with interests: {interests}")
+        
         # Update client metadata with interests
-        if client_id in self.connection_metadata:
+        if client_id not in self.connection_metadata:
+            self.connection_metadata[client_id] = {"interests": interests, "status": "waiting"}
+        else:
             self.connection_metadata[client_id]["interests"] = interests
+            self.connection_metadata[client_id]["status"] = "waiting"
 
         # Try to find a match from waiting users
         best_match = None
@@ -131,12 +136,14 @@ class ConnectionManager:
 
         for waiting_user in self.waiting_users:
             if waiting_user == client_id:
+                logger.debug(f"Skipping self-match for {client_id}")
                 continue
             
             # Calculate match score based on common interests
             waiting_interests = self.connection_metadata.get(waiting_user, {}).get("interests", [])
             common_interests = set(interests) & set(waiting_interests)
             score = len(common_interests)
+            logger.debug(f"Match score with {waiting_user}: {score} (common interests: {common_interests})")
 
             if score > best_score:
                 best_score = score
@@ -147,35 +154,49 @@ class ConnectionManager:
             room_id = self.generate_room_id()
             self.waiting_users.remove(best_match)
             
+            logger.info(f"Matched {client_id} with {best_match} in room {room_id}. Waiting users: {self.waiting_users}")
+            
             self.rooms[room_id] = {
                 "users": [client_id, best_match],
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
 
-            # Update metadata
-            self.connection_metadata[client_id]["room"] = room_id
-            self.connection_metadata[client_id]["peer_id"] = best_match
-            self.connection_metadata[client_id]["status"] = "paired"
+            # Update metadata for both clients
+            for user, peer in [(client_id, best_match), (best_match, client_id)]:
+                if user not in self.connection_metadata:
+                    self.connection_metadata[user] = {}
+                self.connection_metadata[user]["room"] = room_id
+                self.connection_metadata[user]["peer_id"] = peer
+                self.connection_metadata[user]["status"] = "paired"
+                logger.info(f"Updated metadata for {user}: peer_id={peer}, room={room_id}")
 
-            self.connection_metadata[best_match]["room"] = room_id
-            self.connection_metadata[best_match]["peer_id"] = client_id
-            self.connection_metadata[best_match]["status"] = "paired"
+            # Prepare messages
+            message1 = {
+                "type": "paired",
+                "room_id": room_id,
+                "peer_id": best_match
+            }
+            
+            message2 = {
+                "type": "paired",
+                "room_id": room_id,
+                "peer_id": client_id
+            }
 
-            # Notify both users
-            await self.send_personal_message(
-                {"type": "paired", "room_id": room_id, "peer_id": best_match},
-                client_id
-            )
-            await self.send_personal_message(
-                {"type": "paired", "room_id": room_id, "peer_id": client_id},
-                best_match
-            )
+            logger.info(f"Sending to {client_id}: {message1}")
+            logger.info(f"Sending to {best_match}: {message2}")
+
+            # Send notifications
+            await self.send_personal_message(message1, client_id)
+            await self.send_personal_message(message2, best_match)
+            
             return True
         else:
             # No match found, add to waiting list
             if client_id not in self.waiting_users:
                 self.waiting_users.append(client_id)
-            self.connection_metadata[client_id]["status"] = "waiting"
+                logger.info(f"No match found for {client_id}, added to waiting list. Now {len(self.waiting_users)} users waiting.")
+            
             await self.send_personal_message({"type": "waiting"}, client_id)
             return False
 

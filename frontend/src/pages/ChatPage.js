@@ -129,18 +129,34 @@ const ChatPage = () => {
       <div className="chat-container">
         {/* Video Section */}
         <div className="video-section">
-          {/* Remote Video */}
+          {/* Remote Video - ALWAYS RENDERED */}
           <div className="video-wrapper remote-wrapper" data-testid="remote-video-wrapper">
-            {isConnected ? (
-              <video
-                ref={remoteVideoRef}
-                autoPlay
-                playsInline
-                className="video-element"
-                data-testid="remote-video"
-              />
-            ) : (
-              <div className="video-placeholder">
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              className="video-element"
+              data-testid="remote-video"
+              style={{
+                display: isConnected ? 'block' : 'none',
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                backgroundColor: 'black'
+              }}
+            />
+            {!isConnected && (
+              <div className="video-placeholder" style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#1a1a1a'
+              }}>
                 <div className="placeholder-content">
                   {connectionState === "waiting" && (
                     <>
@@ -172,6 +188,12 @@ const ChatPage = () => {
               playsInline
               className="video-element"
               data-testid="local-video"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                backgroundColor: 'black'
+              }}
             />
             <span className="video-label">You</span>
           </div>

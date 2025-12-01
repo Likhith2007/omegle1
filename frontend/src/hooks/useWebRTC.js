@@ -42,7 +42,11 @@ const useWebRTC = () => {
   const initializeMedia = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { 
+          width: { ideal: 1280 }, 
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 }
+        },
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -53,9 +57,12 @@ const useWebRTC = () => {
       localStreamRef.current = stream;
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
+        // Ensure the local video plays
+        localVideoRef.current.muted = true;
+        localVideoRef.current.play().catch(error => {
+          console.error("Error playing local video:", error);
+        });
       }
-
-      return stream;
     } catch (error) {
       console.error("Media access error:", error);
       toast.error("Could not access camera/microphone");
@@ -70,9 +77,20 @@ const useWebRTC = () => {
         iceServers: [
           { urls: ["stun:stun.l.google.com:19302"] },
           { urls: ["stun:stun1.l.google.com:19302"] },
-          { urls: ["stun:stun2.l.google.com:19302"] }
+          { urls: ["stun:stun2.l.google.com:19302"] },
+          // Add TURN server configuration if you have one
+          // {
+          //   urls: "turn:your-turn-server.com:3478",
+          //   username: "username",
+          //   credential: "password"
+          // }
         ]
       };
+      
+      // Make sure we have local media before creating peer connection
+      if (!localStreamRef.current) {
+        await initializeMedia();
+      }
 
       console.log("Creating new peer connection with config:", config);
       const peerConnection = new RTCPeerConnection(config);
@@ -84,13 +102,16 @@ const useWebRTC = () => {
           console.log(`Adding ${track.kind} track to peer connection`);
           peerConnection.addTrack(track, localStreamRef.current);
         });
+        
+        // Verify tracks were added
+        const senders = peerConnection.getSenders();
+        console.log("Peer connection senders:", senders.map(s => s.track?.kind));
       }
 
       // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
-        console.log("ICE candidate:", event.candidate);
         if (event.candidate && websocketRef.current?.readyState === WebSocket.OPEN) {
-          console.log("Sending ICE candidate:", event.candidate);
+          console.log("Sending ICE candidate:", event.candidate.candidate);
           websocketRef.current.send(
             JSON.stringify({
               type: "ice_candidate",
@@ -102,21 +123,40 @@ const useWebRTC = () => {
             })
           );
         } else if (!event.candidate) {
-          console.log("No more ICE candidates to gather");
+          console.log("All ICE candidates have been sent");
         }
       };
 
       // Handle remote stream
       peerConnection.ontrack = (event) => {
-        console.log("Received remote track:", event.track.kind, event.streams);
-        if (event.streams && event.streams[0]) {
-          console.log("Setting remote video source");
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = event.streams[0];
-            setIsConnected(true);
-            toast.success("Connected to stranger!");
-          }
+        console.log("Received remote track:", event.track.kind, "readyState:", event.track.readyState);
+        
+        // Create a new MediaStream if we don't have one yet
+        if (!remoteVideoRef.current.srcObject) {
+          remoteVideoRef.current.srcObject = new MediaStream();
         }
+        
+        // Add the track to the stream
+        const remoteStream = remoteVideoRef.current.srcObject;
+        const existingTrack = remoteStream.getTracks().find(track => track.kind === event.track.kind);
+        
+        // Remove existing track of the same type if it exists
+        if (existingTrack) {
+          remoteStream.removeTrack(existingTrack);
+        }
+        
+        // Add the new track
+        remoteStream.addTrack(event.track);
+        
+        console.log("Added remote track to video element");
+        setIsConnected(true);
+        
+        // Force play the video element
+        remoteVideoRef.current.play().catch(error => {
+          console.error("Error playing remote video:", error);
+        });
+        
+        toast.success("Connected to stranger!");
       };
 
       // Handle connection state changes
@@ -126,6 +166,7 @@ const useWebRTC = () => {
 
         switch (peerConnection.connectionState) {
           case "connected":
+            console.log("WebRTC connection established!");
             setIsConnected(true);
             toast.success("Connected to stranger!");
             break;
@@ -151,10 +192,14 @@ const useWebRTC = () => {
       peerConnection.oniceconnectionstatechange = () => {
         console.log("ICE connection state:", peerConnection.iceConnectionState);
         if (peerConnection.iceConnectionState === "failed") {
-          console.error("ICE connection failed");
-          // Try to recover or restart ICE
+          console.error("ICE connection failed, attempting restart");
           peerConnection.restartIce();
         }
+      };
+
+      // Handle ICE gathering state
+      peerConnection.onicegatheringstatechange = () => {
+        console.log("ICE gathering state:", peerConnection.iceGatheringState);
       };
 
       peerConnectionRef.current = peerConnection;
@@ -169,6 +214,7 @@ const useWebRTC = () => {
   // Close peer connection
   const closePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
+      console.log("Closing peer connection");
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
@@ -187,7 +233,7 @@ const useWebRTC = () => {
     const ws = new WebSocket(`${WS_URL}/ws/${clientIdRef.current}`);
 
     ws.onopen = () => {
-      console.log("WebSocket connected");
+      console.log("WebSocket connected with client ID:", clientIdRef.current);
       setConnectionState("waiting");
       // Request matching
       ws.send(JSON.stringify({ type: "ready", interests: [] }));
@@ -195,7 +241,7 @@ const useWebRTC = () => {
 
     ws.onmessage = async (event) => {
       const message = JSON.parse(event.data);
-      console.log("Received message:", message.type);
+      console.log("Received message:", message.type, message);
 
       switch (message.type) {
         case "waiting":
@@ -207,45 +253,60 @@ const useWebRTC = () => {
           console.log(
             "Paired with peer:",
             message.peer_id,
-            "self:",
-            clientIdRef.current
+            "| Self:",
+            clientIdRef.current,
+            "| Room:",
+            message.room_id
           );
           setConnectionState("connecting");
           setPeerId(message.peer_id);
           roomIdRef.current = message.room_id;
 
+          // FIXED: Always create peer connection when paired
+          const peerConnection = await createPeerConnection();
+          
           // Decide which side should create the offer to avoid glare
           const isInitiator = clientIdRef.current < message.peer_id;
+          console.log("Is initiator:", isInitiator);
 
           if (isInitiator) {
-            const peerConnection = await createPeerConnection();
+            console.log("Creating offer as initiator");
             const offer = await peerConnection.createOffer({
               offerToReceiveAudio: true,
               offerToReceiveVideo: true
             });
             await peerConnection.setLocalDescription(offer);
+            console.log("Sending offer");
             ws.send(
               JSON.stringify({
                 type: "offer",
                 sdp: peerConnection.localDescription.toJSON()
               })
             );
+          } else {
+            console.log("Waiting for offer from peer");
           }
-
           break;
 
         case "offer":
-          console.log("Received offer");
-          let pc = peerConnectionRef.current;
+          console.log("Received offer from peer");
+          // FIXED: Peer connection should already exist from 'paired' event
+          const pc = peerConnectionRef.current;
           if (!pc) {
-            pc = await createPeerConnection();
+            console.error("No peer connection exists when receiving offer!");
+            toast.error("Connection error - please try again");
+            return;
           }
 
           const offer_sdp = new RTCSessionDescription(message.sdp);
+          console.log("Setting remote description (offer)");
           await pc.setRemoteDescription(offer_sdp);
 
+          console.log("Creating answer");
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
+          
+          console.log("Sending answer");
           ws.send(
             JSON.stringify({
               type: "answer",
@@ -255,15 +316,18 @@ const useWebRTC = () => {
           break;
 
         case "answer":
-          console.log("Received answer");
+          console.log("Received answer from peer");
           const answer_sdp = new RTCSessionDescription(message.sdp);
           if (peerConnectionRef.current) {
+            console.log("Setting remote description (answer)");
             await peerConnectionRef.current.setRemoteDescription(answer_sdp);
+          } else {
+            console.error("No peer connection when receiving answer");
           }
           break;
 
         case "ice_candidate":
-          console.log("Received ICE candidate:", message.candidate);
+          console.log("Received ICE candidate:", message.candidate?.candidate);
           if (peerConnectionRef.current && message.candidate) {
             try {
               const candidate = new RTCIceCandidate({
@@ -276,6 +340,8 @@ const useWebRTC = () => {
             } catch (error) {
               console.error("Error adding ICE candidate:", error);
             }
+          } else if (!peerConnectionRef.current) {
+            console.warn("Received ICE candidate but no peer connection exists");
           }
           break;
 
@@ -299,6 +365,7 @@ const useWebRTC = () => {
           break;
 
         default:
+          console.log("Unknown message type:", message.type);
           break;
       }
     };
@@ -328,7 +395,7 @@ const useWebRTC = () => {
         await initializeMedia();
         console.log("Media initialized");
         connectWebSocket();
-        console.log("WebSocket connected");
+        console.log("WebSocket connecting...");
       } catch (error) {
         console.error("Initialization error:", error);
         if (isMounted) {

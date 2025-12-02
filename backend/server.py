@@ -1,19 +1,45 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import os
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import json
 import uuid
 from typing import Dict, Optional
 import asyncio
+import logging
+from dotenv import load_dotenv
 
-app = FastAPI()
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="Omegle Clone API",
+    description="Backend for Omegle-like video chat application",
+    version="1.0.0"
+)
+
+# Get allowed origins from environment variable or default to all
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS", 
+    "http://localhost:3000,http://localhost:8000"
+).split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Health check endpoint
+@app.get("/")
+async def health_check():
+    return {"status": "ok", "message": "Omegle Clone API is running"}
 
 # Store connected clients and their rooms
 clients: Dict[str, WebSocket] = {}
@@ -79,7 +105,7 @@ async def cleanup_client(client_id: str):
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     await websocket.accept()
     clients[client_id] = websocket
-    print(f"✅ Client connected: {client_id}")
+    logger.info(f"✅ Client connected: {client_id}")
     
     try:
         while True:
@@ -87,7 +113,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             message = json.loads(data)
             msg_type = message.get("type")
             
-            print(f"📨 Received from {client_id}: {msg_type}")
+            logger.info(f"📨 Received from {client_id}: {msg_type}")
             
             if msg_type == "ready":
                 # Try to match with a waiting client
@@ -101,7 +127,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         "client2": peer_id
                     }
                     
-                    print(f"👥 Paired {client_id} with {peer_id} in room {room_id}")
+                    logger.info(f"👥 Paired {client_id} with {peer_id} in room {room_id}")
                     
                     # Send pairing messages to both
                     await clients[client_id].send_text(json.dumps({
@@ -119,12 +145,12 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     # Add to waiting list
                     if client_id not in waiting_clients:
                         waiting_clients.append(client_id)
-                    print(f"⏳ {client_id} added to waiting list")
+                    logger.info(f"⏳ {client_id} added to waiting list")
                     await websocket.send_text(json.dumps({"type": "waiting"}))
             
             elif msg_type == "disconnect":
                 # Handle disconnect request
-                print(f"🔌 {client_id} requested disconnect")
+                logger.info(f"🔌 {client_id} requested disconnect")
                 room_id = find_room_by_client(client_id)
                 
                 if room_id:
@@ -141,7 +167,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     
                     # Remove room
                     del rooms[room_id]
-                    print(f"🗑️ Room {room_id} deleted")
+                    logger.info(f"🗑️ Room {room_id} deleted")
             
             elif msg_type in ["offer", "answer", "ice_candidate", "chat_message"]:
                 # Forward to peer
@@ -151,24 +177,36 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     peer_id = get_peer_id(room_id, client_id)
                     
                     if peer_id and peer_id in clients:
-                        print(f"📤 Forwarding {msg_type} from {client_id} to {peer_id}")
+                        logger.info(f"📤 Forwarding {msg_type} from {client_id} to {peer_id}")
                         await clients[peer_id].send_text(data)
                     else:
-                        print(f"❌ Peer {peer_id} not found for {client_id}")
+                        logger.info(f"❌ Peer {peer_id} not found for {client_id}")
                 else:
-                    print(f"❌ No room found for {client_id}")
+                    logger.info(f"❌ No room found for {client_id}")
             
             else:
-                print(f"⚠️ Unknown message type: {msg_type}")
+                logger.info(f"⚠️ Unknown message type: {msg_type}")
     
     except WebSocketDisconnect:
-        print(f"🔌 Client disconnected: {client_id}")
+        logger.info(f"🔌 Client disconnected: {client_id}")
         await cleanup_client(client_id)
     except Exception as e:
-        print(f"❌ Error for {client_id}: {e}")
+        logger.info(f"❌ Error for {client_id}: {e}")
         await cleanup_client(client_id)
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting server on http://127.0.0.1:8000")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    port = int(os.getenv("PORT", 8000))
+    host = os.getenv("HOST", "0.0.0.0")
+    
+    logger.info(f"🚀 Starting server on http://{host}:{port}")
+    logger.info(f"Allowed origins: {ALLOWED_ORIGINS}")
+    
+    uvicorn.run(
+        "server:app",
+        host=host,
+        port=port,
+        reload=False,
+        workers=1,
+        log_level="info"
+    )

@@ -8,7 +8,7 @@ python-multipart>=0.0.5
 websockets>=10.4
 
 # ASGI server
-uvloop>=0.17.0
+# uvloop>=0.17.0
 
 # Security
 python-jose[cryptography]>=3.3.0

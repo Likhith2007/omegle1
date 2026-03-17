@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   Video,
   VideoOff,
   Mic,
   MicOff,
-  SkipForward,
+  Copy,
   MessageCircle,
   Send,
-  AlertTriangle,
+  LogOut,
+  MonitorUp,
   Home,
-  Settings
+  Settings,
+  AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,32 +24,79 @@ import SettingsModal from "@/components/SettingsModal";
 import "@/styles/chat.css";
 
 const ChatPage = () => {
+  const { roomId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const action = location.state?.action || "join";
+
   const {
     localVideoRef,
     remoteVideoRef,
     connectionState,
     chatMessages,
     sendChatMessage,
-    skipToNext,
+    leaveRoom, // renamed skipToNext to leaveRoom correctly in hook
     disconnect,
     toggleAudio,
     toggleVideo,
+    toggleScreenShare,
     isAudioEnabled,
     isVideoEnabled,
+    isScreenSharing,
     isConnected,
+    subtitles,
+    translationLanguage,
+    setTranslationLanguage,
     peerId
-  } = useWebRTC();
+  } = useWebRTC(roomId, action); // Pass roomId and action to hook
 
   const [message, setMessage] = useState("");
   const [showReportModal, setShowReportModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const chatEndRef = useRef(null);
 
+  const [engagement, setEngagement] = useState({ score: null, emotion: null });
+
   // Auto-scroll chat to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
+
+  // Engagement tracking
+  useEffect(() => {
+    let interval;
+    if (isConnected && isVideoEnabled) {
+      interval = setInterval(async () => {
+        if (!localVideoRef.current) return;
+        const video = localVideoRef.current;
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.5);
+
+          try {
+            const res = await fetch("http://localhost:8000/api/analyze-engagement", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ image_b64: dataUrl })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.score !== undefined) {
+                setEngagement({ score: data.score, emotion: data.emotion });
+              }
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }, 10000); // Analyze every 10 seconds
+    }
+    return () => clearInterval(interval);
+  }, [isConnected, isVideoEnabled, localVideoRef]);
 
   const handleSendMessage = (e) => {
     e.preventDefault();
@@ -57,14 +106,14 @@ const ChatPage = () => {
     }
   };
 
-  const handleSkip = async () => {
-    await skipToNext();
-    toast.info("Searching for a new stranger...");
+  const handleLeave = async () => {
+    await leaveRoom();
+    navigate(`/summary/${roomId}`);
   };
 
   const handleDisconnect = () => {
     disconnect();
-    navigate("/");
+    navigate(`/summary/${roomId}`);
   };
 
   const handleReport = () => {
@@ -162,6 +211,23 @@ const ChatPage = () => {
                     <>
                       <div className="loading-spinner"></div>
                       <p>Searching for a stranger...</p>
+                      <div className="mt-4 flex flex-col items-center bg-black/50 p-4 rounded-lg border border-gray-700">
+                        <p className="text-sm text-gray-400 mb-2">Share this code with your meeting partner:</p>
+                        <div className="flex items-center gap-2">
+                          <code className="text-xl font-mono text-purple-400 bg-black px-3 py-1 rounded">{roomId}</code>
+                          <Button 
+                            size="sm" 
+                            variant="secondary" 
+                            onClick={() => {
+                              navigator.clipboard.writeText(roomId);
+                              toast.success("Room code copied!");
+                            }}
+                          >
+                            <Copy className="w-4 h-4 mr-2" />
+                            Copy
+                          </Button>
+                        </div>
+                      </div>
                     </>
                   )}
                   {connectionState === "connecting" && (
@@ -177,6 +243,11 @@ const ChatPage = () => {
               </div>
             )}
             <span className="video-label">Stranger</span>
+            {subtitles.remote && (
+              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg text-lg text-center max-w-[80%] z-50">
+                {subtitles.remote}
+              </div>
+            )}
           </div>
 
           {/* Local Video */}
@@ -196,6 +267,17 @@ const ChatPage = () => {
               }}
             />
             <span className="video-label">You</span>
+            {engagement.score !== null && (
+              <div className="absolute top-2 right-2 bg-black/70 text-white px-2 py-1 rounded-md text-xs z-50 flex flex-col items-end shadow-sm">
+                <span className="font-bold text-green-400">Focus: {engagement.score}/100</span>
+                <span className="text-gray-300">{engagement.emotion}</span>
+              </div>
+            )}
+            {subtitles.local && (
+              <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-2 py-1 rounded-md text-sm text-center max-w-[90%] z-50">
+                {subtitles.local}
+              </div>
+            )}
           </div>
 
           {/* Video Controls */}
@@ -219,15 +301,36 @@ const ChatPage = () => {
               {isAudioEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
             </Button>
             <Button
-              onClick={handleSkip}
-              variant="secondary"
+              onClick={toggleScreenShare}
+              variant={isScreenSharing ? "default" : "secondary"}
+              size="icon"
+              className="control-btn"
+              data-testid="toggle-screenshare-btn"
+            >
+              <MonitorUp className="w-5 h-5" />
+            </Button>
+            <Button
+              onClick={handleLeave}
+              variant="destructive"
               size="icon"
               className="control-btn skip-btn"
-              disabled={!isConnected && connectionState !== "waiting"}
-              data-testid="skip-btn"
+              data-testid="leave-btn"
             >
-              <SkipForward className="w-5 h-5" />
+              <LogOut className="w-5 h-5" />
             </Button>
+            
+            <select 
+              value={translationLanguage}
+              onChange={(e) => setTranslationLanguage(e.target.value)}
+              className="bg-black text-white border border-gray-700 rounded-md px-2 py-1 ml-2"
+            >
+              <option value="none">Translate: Off</option>
+              <option value="Spanish">Spanish</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Hindi">Hindi</option>
+            </select>
             {isConnected && (
               <Button
                 onClick={handleReport}

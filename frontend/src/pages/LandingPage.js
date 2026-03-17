@@ -5,12 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import axios from "axios";
 import "@/styles/landing.css";
-
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-
+const API = "http://localhost:8000/api";
 const LandingPage = () => {
   const navigate = useNavigate();
   const [stats, setStats] = useState({ online_users: 0 });
+  const [roomCode, setRoomCode] = useState("");
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -27,8 +26,25 @@ const LandingPage = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const handleStartChat = () => {
-    navigate("/chat");
+  const handleJoinRoom = async () => {
+    if (roomCode.trim()) {
+      try {
+        const response = await axios.get(`${API}/room/${roomCode.trim()}/verify`);
+        if (response.data.exists) {
+          navigate(`/room/${roomCode.trim()}`, { state: { action: "join" } });
+        } else {
+          alert("Invalid Room Code. This room does not exist.");
+        }
+      } catch (error) {
+        console.error("Error verifying room:", error);
+        alert("Failed to verify room code.");
+      }
+    }
+  };
+
+  const handleCreateRoom = () => {
+    const newRoomId = Math.random().toString(36).substring(2, 9);
+    navigate(`/room/${newRoomId}`, { state: { action: "create" } });
   };
 
   return (
@@ -46,26 +62,47 @@ const LandingPage = () => {
           </div>
           
           <h1 className="hero-title" data-testid="hero-title">
-            Meet Strangers.
+            Meet Anywhere.
             <br />
-            <span className="title-gradient">Connect Instantly.</span>
+            <span className="title-gradient">Host Instantly.</span>
           </h1>
           
           <p className="hero-subtitle" data-testid="hero-subtitle">
-            Random video and text chat with people around the world.
+            Create a room and share the link, or join an existing meeting.
             <br />
-            Anonymous, instant, and electric.
+            AI-powered transcripts, summaries, and more.
           </p>
           
-          <div className="hero-actions">
+          <div className="hero-actions" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <input 
+                type="text" 
+                value={roomCode} 
+                onChange={(e) => setRoomCode(e.target.value)} 
+                placeholder="Enter Room Code" 
+                className="flex h-11 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ backgroundColor: 'white', color: 'black' }}
+              />
+              <Button
+                onClick={handleJoinRoom}
+                className="start-chat-btn"
+                size="lg"
+              >
+                Join
+              </Button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+               <span style={{ margin: '10px 0', opacity: 0.7 }}>OR</span>
+            </div>
             <Button
-              onClick={handleStartChat}
+              onClick={handleCreateRoom}
               className="start-chat-btn"
+              variant="outline"
               size="lg"
-              data-testid="start-chat-btn"
+              style={{ backgroundColor: 'rgba(255, 255, 255, 0.1)' }}
             >
               <Video className="w-5 h-5 mr-2" />
-              Start Chatting
+              Create New Room
             </Button>
           </div>
         </div>
@@ -156,7 +193,7 @@ const LandingPage = () => {
             Join thousands of users connecting right now
           </p>
           <Button
-            onClick={handleStartChat}
+            onClick={handleCreateRoom}
             className="cta-btn"
             size="lg"
             data-testid="cta-btn"

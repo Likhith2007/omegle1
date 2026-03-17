@@ -5,13 +5,17 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const WS_URL = BACKEND_URL.replace(/^http/, "ws");
 const API = `${BACKEND_URL}/api`;
 
-const useWebRTC = () => {
+const useWebRTC = (roomIdToJoin, action = "join") => {
   const [connectionState, setConnectionState] = useState("disconnected");
   const [chatMessages, setChatMessages] = useState([]);
+  const [subtitles, setSubtitles] = useState({ local: "", remote: "" });
+  const [translationLanguage, setTranslationLanguage] = useState("none");
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [peerId, setPeerId] = useState(null);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const screenTrackRef = useRef(null);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -21,6 +25,7 @@ const useWebRTC = () => {
   const clientIdRef = useRef(null);
   const iceConfigRef = useRef(null);
   const roomIdRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   // Fetch ICE configuration
   const fetchICEConfig = useCallback(async () => {
@@ -176,8 +181,10 @@ const useWebRTC = () => {
             setIsConnected(false);
             closePeerConnection();
             // Try to reconnect if WebSocket is still open
-            if (websocketRef.current?.readyState === WebSocket.OPEN) {
-              websocketRef.current.send(JSON.stringify({ type: "ready", interests: [] }));
+            if (websocketRef.current?.readyState === WebSocket.OPEN && roomIdRef.current) {
+               // Use action here as well if reconnecting via a join is expected, 
+               // but we simply trigger "join_room" because the room already belongs to them and exists
+              websocketRef.current.send(JSON.stringify({ type: "join_room", room_id: roomIdRef.current }));
             }
             break;
           case "closed":
@@ -211,6 +218,8 @@ const useWebRTC = () => {
     }
   }, []);
 
+  const peerConnectionPromiseRef = useRef(null);
+
   // Close peer connection
   const closePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
@@ -218,6 +227,7 @@ const useWebRTC = () => {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
+    peerConnectionPromiseRef.current = null;
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
@@ -228,7 +238,7 @@ const useWebRTC = () => {
   }, []);
 
   // Initialize WebSocket connection
-  const connectWebSocket = useCallback(() => {
+  const connectWebSocket = useCallback((roomIdToJoin) => {
     clientIdRef.current = `client_${Date.now()}`;
     const ws = new WebSocket(`${WS_URL}/ws/${clientIdRef.current}`);
 
@@ -236,7 +246,8 @@ const useWebRTC = () => {
       console.log("WebSocket connected with client ID:", clientIdRef.current);
       setConnectionState("waiting");
       // Request matching
-      ws.send(JSON.stringify({ type: "ready", interests: [] }));
+      const eventType = action === "create" ? "create_room" : "join_room";
+      ws.send(JSON.stringify({ type: eventType, room_id: roomIdToJoin }));
     };
 
     ws.onmessage = async (event) => {
@@ -263,7 +274,8 @@ const useWebRTC = () => {
           roomIdRef.current = message.room_id;
 
           // FIXED: Always create peer connection when paired
-          const peerConnection = await createPeerConnection();
+          peerConnectionPromiseRef.current = createPeerConnection();
+          const peerConnection = await peerConnectionPromiseRef.current;
           
           // Decide which side should create the offer to avoid glare
           const isInitiator = clientIdRef.current < message.peer_id;
@@ -291,7 +303,10 @@ const useWebRTC = () => {
         case "offer":
           console.log("Received offer from peer");
           // FIXED: Peer connection should already exist from 'paired' event
-          const pc = peerConnectionRef.current;
+          let pc = peerConnectionRef.current;
+          if (!pc && peerConnectionPromiseRef.current) {
+            pc = await peerConnectionPromiseRef.current;
+          }
           if (!pc) {
             console.error("No peer connection exists when receiving offer!");
             toast.error("Connection error - please try again");
@@ -352,16 +367,39 @@ const useWebRTC = () => {
           ]);
           break;
 
+        case "transcript":
+          if (translationLanguage !== "none") {
+            try {
+              fetch("http://localhost:8000/api/translate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: message.text, target_language: translationLanguage })
+              })
+              .then(res => res.json())
+              .then(data => {
+                setSubtitles(prev => ({ ...prev, remote: data.translated_text || message.text }));
+              });
+            } catch (e) {
+              setSubtitles(prev => ({ ...prev, remote: message.text }));
+            }
+          } else {
+            setSubtitles(prev => ({ ...prev, remote: message.text }));
+          }
+          
+          // Clear subtitle after 4 seconds
+          if (window.remoteSubtitleTimeout) clearTimeout(window.remoteSubtitleTimeout);
+          window.remoteSubtitleTimeout = setTimeout(() => {
+            setSubtitles(prev => ({ ...prev, remote: "" }));
+          }, 4000);
+          break;
+
         case "peer_disconnected":
           toast.info("Stranger disconnected");
           closePeerConnection();
-          setConnectionState("waiting");
-          // Auto-reconnect
+          // Also redirect to summary page instead of just clearing connection state
           setTimeout(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "ready", interests: [] }));
-            }
-          }, 1000);
+            window.location.href = `/summary/${roomIdRef.current}`;
+          }, 1500);
           break;
 
         default:
@@ -394,7 +432,7 @@ const useWebRTC = () => {
         console.log("ICE config fetched");
         await initializeMedia();
         console.log("Media initialized");
-        connectWebSocket();
+        connectWebSocket(roomIdToJoin); // USE the parameter passed to the hook
         console.log("WebSocket connecting...");
       } catch (error) {
         console.error("Initialization error:", error);
@@ -447,6 +485,128 @@ const useWebRTC = () => {
     };
   }, [fetchICEConfig, initializeMedia, connectWebSocket]);
 
+  // Speech Recognition setup
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      
+      recognition.onresult = (event) => {
+        let finalTranscript = '';
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        
+        const currentText = finalTranscript || interimTranscript;
+        if (currentText) {
+          setSubtitles(prev => ({ ...prev, local: currentText }));
+          
+          if (finalTranscript && websocketRef.current && websocketRef.current.readyState === WebSocket.OPEN) {
+            websocketRef.current.send(JSON.stringify({
+              type: "transcript",
+              text: finalTranscript
+            }));
+            
+            // Auto clear local subtitle
+            setTimeout(() => {
+              setSubtitles(prev => ({ ...prev, local: "" }));
+            }, 3000);
+          }
+        }
+      };
+      
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  // Manage speech recognition state based on connection and mute
+  useEffect(() => {
+    if (isConnected && isAudioEnabled && recognitionRef.current) {
+      try { recognitionRef.current.start(); } catch (e) { /* Already started */ }
+    } else if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { /* Already stopped */ }
+      setSubtitles(prev => ({ ...prev, local: "" }));
+    }
+  }, [isConnected, isAudioEnabled]);
+
+  // Smart Noise Detection (Warn if speaking while muted)
+  useEffect(() => {
+    let audioContext;
+    let analyser;
+    let microphone;
+    let javascriptNode;
+    let analysisStream;
+    let lastWarnTime = 0;
+
+    if (!isAudioEnabled && isConnected) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+          analysisStream = stream;
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          analyser = audioContext.createAnalyser();
+          microphone = audioContext.createMediaStreamSource(stream);
+          
+          // Use ScriptProcessor (deprecated but highly compatible) to analyze audio levels
+          javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+
+          analyser.smoothingTimeConstant = 0.8;
+          analyser.fftSize = 1024;
+
+          microphone.connect(analyser);
+          analyser.connect(javascriptNode);
+          javascriptNode.connect(audioContext.destination);
+
+          javascriptNode.onaudioprocess = () => {
+            const array = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(array);
+            let values = 0;
+
+            const length = array.length;
+            for (let i = 0; i < length; i++) {
+              values += array[i];
+            }
+
+            const average = values / length;
+
+            // If average volume > 30, user is speaking
+            if (average > 30) {
+              const now = Date.now();
+              // Warn at most once every 5 seconds
+              if (now - lastWarnTime > 5000) {
+                toast("Microphone is muted.", {
+                  description: "We detect you are speaking, but you are muted.",
+                  id: "muted-warning",
+                  icon: "🔇"
+                });
+                lastWarnTime = now;
+              }
+            }
+          };
+        })
+        .catch(err => console.error("Could not access mic for noise detection:", err));
+    }
+
+    return () => {
+      if (javascriptNode) {
+        javascriptNode.disconnect();
+        javascriptNode.onaudioprocess = null;
+      }
+      if (analyser) analyser.disconnect();
+      if (microphone) microphone.disconnect();
+      if (audioContext && audioContext.state !== 'closed') audioContext.close();
+      if (analysisStream) {
+        analysisStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [isAudioEnabled, isConnected]);
+
   // Send chat message
   const sendChatMessage = useCallback((text) => {
     if (websocketRef.current && websocketRef.current.readyState === WebSocket.OPEN) {
@@ -460,21 +620,14 @@ const useWebRTC = () => {
     }
   }, []);
 
-  // Skip to next stranger
+  // Skip to next stranger -> Changed to "Leave Room" internally or just reset
   const skipToNext = useCallback(async () => {
     closePeerConnection();
     setChatMessages([]);
-    setConnectionState("waiting");
+    setConnectionState("disconnected");
 
     if (websocketRef.current && websocketRef.current.readyState === WebSocket.OPEN) {
-      // Disconnect from current peer
       websocketRef.current.send(JSON.stringify({ type: "disconnect" }));
-      // Request new match
-      setTimeout(() => {
-        if (websocketRef.current && websocketRef.current.readyState === WebSocket.OPEN) {
-          websocketRef.current.send(JSON.stringify({ type: "ready", interests: [] }));
-        }
-      }, 500);
     }
   }, [closePeerConnection]);
 
@@ -512,19 +665,87 @@ const useWebRTC = () => {
     }
   }, []);
 
+  // Toggle screen share
+  const stopScreenShare = useCallback(async () => {
+    if (screenTrackRef.current) {
+      screenTrackRef.current.stop();
+      screenTrackRef.current = null;
+    }
+    
+    if (peerConnectionRef.current && localStreamRef.current) {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        const sender = peerConnectionRef.current.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(videoTrack);
+        }
+        // Restore local video preview
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStreamRef.current;
+        }
+      }
+    }
+    setIsScreenSharing(false);
+  }, []);
+
+  const toggleScreenShare = useCallback(async () => {
+    if (isScreenSharing) {
+      await stopScreenShare();
+      return;
+    }
+
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const screenTrack = screenStream.getVideoTracks()[0];
+      screenTrackRef.current = screenTrack;
+
+      if (peerConnectionRef.current) {
+        const sender = peerConnectionRef.current.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(screenTrack);
+        }
+      }
+
+      // Update local preview
+      if (localVideoRef.current) {
+        const newStream = new MediaStream([screenTrack]);
+        if (localStreamRef.current) {
+          const audioTrack = localStreamRef.current.getAudioTracks()[0];
+          if (audioTrack) newStream.addTrack(audioTrack);
+        }
+        localVideoRef.current.srcObject = newStream;
+      }
+
+      setIsScreenSharing(true);
+
+      // Listen for browser's native "Stop sharing" button
+      screenTrack.onended = () => {
+        stopScreenShare();
+      };
+    } catch (error) {
+      console.error("Error starting screen share:", error);
+      toast.error("Could not share screen");
+    }
+  }, [isScreenSharing, stopScreenShare]);
+
   return {
     localVideoRef,
     remoteVideoRef,
     connectionState,
     chatMessages,
     sendChatMessage,
-    skipToNext,
+    leaveRoom: skipToNext, // Renamed skipToNext to leaveRoom as per the provided code edit
     disconnect,
     toggleAudio,
     toggleVideo,
+    toggleScreenShare,
     isAudioEnabled,
     isVideoEnabled,
+    isScreenSharing,
     isConnected,
+    subtitles,
+    translationLanguage,
+    setTranslationLanguage,
     peerId
   };
 };
